@@ -1,10 +1,11 @@
-dd653e05d146f26f78fc0da08bec6633 *DESCRIPTION
+87ffbfc7c6a080ad43d31c8790b33fc7 *DESCRIPTION
 3af0d5f6726a14ed40722905f3202a79 *LICENSE
 7f8bb36ec8f26e9b90fb5955ac0503ce *NAMESPACE
+feaf725470fef9099bbf6aaf5dc51c55 *NEWS.md
 953783b3cf54ea255ab03829fe1bed43 *R/libproj-package.R
-880bf30620e68cb95d7bd208a64a5cfe *README.md
+0c120a039ac458a63af09e094d062fb0 *README.md
 a6b494fb66d5a3d08319ee0ef9ab3e34 *cleanup
-d5ecebe96cc2751f2aad968fc901694e *configure
+ad0e3c4c939f02c4ffbc99b8304c1f80 *configure
 a4973bc6a994701c042b47d25359c5a0 *inst/include/libproj.c
 2f01afb4c502a678ae60ef54c7c3dc1c *inst/include/libproj.h
 f6d1f275176d7cfcc5c6800ec90a1d1e *inst/proj/GL27
@@ -14,7 +15,7 @@ ab32436d1ae98bb4ef3d608ac74de59c *inst/proj/ITRF2014
 2b960f852dfff222d3af4d2f564efe19 *inst/proj/nad27
 48aa9b7c6de83a786d3b63267b52c6db *inst/proj/nad83
 fd062d155b1d4fd063ecf759589bc95f *inst/proj/proj.db
-c9429775ba86e3bc9854fad6c91e9932 *man/libproj-package.Rd
+38fc79fdcc64e31f8c66b4a8cdb30f99 *man/libproj-package.Rd
 a3853ac093f80b80ab9a335130102946 *man/libproj_version.Rd
 83b3458cf4ce5dabfd5699b7db27a06f *src/Makevars.in
 ebea6c1488b5d25756eaf0c644bf683d *src/Makevars.win
