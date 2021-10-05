@@ -5,8 +5,8 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "proj.h"
-#include "proj_internal.h"
+#include "R-libproj/proj.h"
+#include "R-libproj/proj_internal.h"
 
 #define LINE_LEN 72
 	static int
@@ -19,13 +19,13 @@ pr_list(PJ *P, int not_used) {
 		if ((!not_used && t->used) || (not_used && !t->used)) {
 			l = (int)strlen(t->param) + 1;
 			if (n + l > LINE_LEN) {
-				(void)cpp_compat_printf("\n#");
+				(void)cpp_compat_puts("\n#");
 				n = 2;
 			}
 			(void)cpp_compat_putchar(' ');
 			if (*(t->param) != '+')
 				(void)cpp_compat_putchar('+');
-			(void)cpp_compat_printf(t->param);
+			(void)cpp_compat_puts(t->param);
 			n += l;
 		} else
 			flag = 1;
@@ -45,7 +45,7 @@ pj_pr_list(PJ *P) {
 	}
 	(void)cpp_compat_putchar('\n');
 	if (pr_list(P, 0)) {
-		(void)cpp_compat_printf("#--- following specified but NOT used\n");
+		(void)cpp_compat_puts("#--- following specified but NOT used\n");
 		(void)pr_list(P, 1);
 	}
 }
@@ -67,7 +67,7 @@ char *pj_get_def( PJ *P, int options )
     size_t def_max = 10;
     (void) options;
 
-    definition = (char *) pj_malloc(def_max);
+    definition = (char *) malloc(def_max);
     if (!definition)
         return nullptr;
     definition[0] = '\0';
@@ -85,14 +85,14 @@ char *pj_get_def( PJ *P, int options )
             char *def2;
 
             def_max = def_max * 2 + l + 5;
-            def2 = (char *) pj_malloc(def_max);
+            def2 = (char *) malloc(def_max);
             if (def2) {
                 strcpy( def2, definition );
-                pj_dalloc( definition );
+                free( definition );
                 definition = def2;
             }
             else {
-                pj_dalloc( definition );
+                free( definition );
                 return nullptr;
             }
         }

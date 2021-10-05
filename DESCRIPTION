@@ -1,6 +1,6 @@
 Package: libproj
 Title: Generic Coordinate Transformation Library ('PROJ') C API
-Version: 7.1.0-2
+Version: 8.1.0-1
 Authors@R: 
     c(
       person(given = "Dewey",
@@ -27,16 +27,16 @@ Description: Provides a 'PROJ' <https://proj.org> C API that can be
   or impossible to install a binary version of the library.
 License: MIT + file LICENSE
 Encoding: UTF-8
-LazyData: true
-RoxygenNote: 7.1.1
-SystemRequirements: libcurl (optional), libtiff + libjpeg + zlib
-        (optional)
-Suggests: testthat, Rcpp
+RoxygenNote: 7.1.2
+SystemRequirements: C++11, libcurl, libtiff, zlib
+Suggests: gh, testthat
 URL: https://paleolimbot.github.io/libproj/,
         https://github.com/paleolimbot/libproj
 BugReports: https://github.com/paleolimbot/libproj/issues
+Imports: rappdirs
+LinkingTo: cpp11
 NeedsCompilation: yes
-Packaged: 2020-08-31 19:01:33 UTC; dewey
+Packaged: 2021-09-26 12:59:37 UTC; deweydunnington
 Author: Dewey Dunnington [aut, cre] (<https://orcid.org/0000-0002-9415-4582>),
   PROJ authors [aut],
   Jeroen Ooms [cph] (configure script),
@@ -49,4 +49,4 @@ Author: Dewey Dunnington [aut, cre] (<https://orcid.org/0000-0002-9415-4582>),
   Evan Roualt [cph]
 Maintainer: Dewey Dunnington <dewey@fishandwhistle.net>
 Repository: CRAN
-Date/Publication: 2020-09-01 09:50:21 UTC
+Date/Publication: 2021-10-05 23:10:02 UTC

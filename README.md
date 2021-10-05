@@ -6,7 +6,7 @@
 <!-- badges: start -->
 
 [![Lifecycle:
-experimental](https://img.shields.io/badge/lifecycle-experimental-orange.svg)](https://www.tidyverse.org/lifecycle/#experimental)
+experimental](https://img.shields.io/badge/lifecycle-experimental-orange.svg)](https://lifecycle.r-lib.org/articles/stages.html#experimental)
 ![R-CMD-check](https://github.com/paleolimbot/libproj/workflows/R-CMD-check/badge.svg)
 <!-- badges: end -->
 
@@ -34,24 +34,75 @@ Package Manager’s public instance](https://packagemanager.rstudio.com/)
 [here](https://packagemanager.rstudio.com/client/#/repos/1/overview) for
 how to configure on your platform).
 
-You can install the development version from
-[GitHub](https://github.com/) with:
+You can install the development version from [R
+Universe](https://r-universe.dev/) with:
 
 ``` r
-# install.packages("remotes")
-remotes::install_github("paleolimbot/libproj")
+install.packages("libproj", repos = "https://paleolimbot.r-universe.dev")
 ```
+
+## Configuration
+
+The libproj package provides a configuration that is likely to work on
+all systems by default.
+
+``` r
+library(libproj)
+libproj_configuration()
+#> $db_path
+#> [1] "/Library/Frameworks/R.framework/Versions/4.1/Resources/library/libproj/proj/proj.db"
+#> 
+#> $search_path
+#> [1] "/Library/Frameworks/R.framework/Versions/4.1/Resources/library/libproj/proj"
+#> [2] "/Users/dewey/Library/Application Support/R-libproj/data"                    
+#> 
+#> $network_endpoint
+#> [1] "https://cdn.proj.org"
+#> 
+#> $log_level
+#> [1] 1
+#> 
+#> $ca_bundle_path
+#> [1] NA
+#> 
+#> $network_enabled
+#> [1] FALSE
+```
+
+You probably want to install the [PROJ-data
+files](https://github.com/OSGeo/PROJ-data) or turn on network access (by
+setting `options(libproj.network_enabled = TRUE)` in your .Rprofile) to
+ensure that datum transforms are handled correctly. The preferred
+approach is to install all the data files (\~600 MB).
+
+``` r
+libproj_install_proj_data()
+```
+
+    Checking for latest PROJ-data package at https://github.com/OSGeo/PROJ-data/releases/latest
+    Downloading 'https://github.com/OSGeo/PROJ-data/releases/download/1.6.0/proj-data-1.6.zip' (558 MB)
+    trying URL 'https://github.com/OSGeo/PROJ-data/releases/download/1.6.0/proj-data-1.6.zip'
+    Content type 'application/octet-stream' length 585582140 bytes (558.5 MB)
+    ==================================================
+    downloaded 558.5 MB
+
+    Extracting '/var/folders/bq/2rcjstv90nx1_wrt8d3gqw6m0000gn/T//RtmplU9vQO/filed4072e1fa820.zip' to '/Users/dewey/Library/Application Support/R-libproj/data'
+    Saving a record of the install to '/Users/dewey/Library/Application Support/R-libproj/data/.libproj_install_proj_data'
+    Done.
 
 ## Example
 
-This package only exists for its exported C API:
+This package only exists for its exported C API. You can use it
+interactively (if using Rcpp use `// [[Rcpp::depends(libproj)]]`; if
+using cpp11 use `[[cpp11::linking_to(libproj)]]` to decorate at least
+one function) or by adding `libproj` to the `LinkingTo` field of a
+dependency package.
+
+An example using [cpp11](https://cpp11.r-lib.org):
 
 ``` cpp
-#include <Rcpp.h>
-using namespace Rcpp;
-
-// Packages will also need LinkingTo: libproj
-// [[Rcpp::depends(libproj)]]
+#include <cpp11.hpp>
+using namespace cpp11;
 
 // needed in every file that uses proj_*() functions
 #include "libproj.h"
@@ -64,12 +115,76 @@ using namespace Rcpp;
 
 // this function needs to be called once before any proj_*() functions
 // are called (e.g., in .onLoad() for your package)
-// [[Rcpp::export]]
+[[cpp11::linking_to(libproj)]]
+[[cpp11::register]]
 void cpp_libproj_init_api() {
   libproj_init_api();
 }
 
 // regular C or C++ code that uses proj_()* functions!
+[[cpp11::register]]
+list proj_coords(list xy, std::string from, std::string to) {
+  doubles x = xy[0];
+  doubles y = xy[1];
+  
+  PJ_CONTEXT* context = PJ_DEFAULT_CTX;
+  
+  PJ* trans = proj_create_crs_to_crs(context, from.c_str(), to.c_str(), NULL);
+  if (trans == NULL) {
+    int error_code = proj_context_errno(context);
+    stop("Error creating transform: %s", proj_context_errno_string(context, error_code));
+  }
+  
+  writable::doubles xout(x);
+  writable::doubles yout(y);
+  size_t stride = sizeof(double);
+  
+  proj_trans_generic(
+    trans, PJ_FWD,
+    REAL(xout), stride, xout.size(),
+    REAL(yout), stride, yout.size(),
+    nullptr, stride, 0,
+    nullptr, stride, 0
+  );
+  
+  int error_code = proj_errno(trans);
+  proj_destroy(trans);
+  
+  if (error_code != 0) {
+    stop("Error transforming coords: %s", proj_context_errno_string(context, error_code));
+  }
+  
+  writable::list out = {xout, yout};
+  out.names() = {"x", "y"};
+  return out;
+}
+```
+
+``` r
+cpp_libproj_init_api()
+proj_coords(list(-64, 45), "+proj=longlat", "EPSG:32620")
+#> $x
+#> [1] 421184.7
+#> 
+#> $y
+#> [1] 4983437
+```
+
+An example using [Rcpp](https://cran.r-project.org/package=Rcpp):
+
+``` cpp
+#include <Rcpp.h>
+using namespace Rcpp;
+
+// [[Rcpp::depends(libproj)]]
+#include "libproj.h"
+#include "libproj.c"
+
+// [[Rcpp::export]]
+void cpp_libproj_init_api() {
+  libproj_init_api();
+}
+
 // [[Rcpp::export]]
 List proj_coords(List xy, std::string from, std::string to) {
   NumericVector x = xy[0];
@@ -81,7 +196,7 @@ List proj_coords(List xy, std::string from, std::string to) {
   if (trans == NULL) {
     int errorCode = proj_context_errno(context);
     std::stringstream err;
-    err << "Error creating transform: " << proj_errno_string(errorCode);
+    err << "Error creating transform: " << proj_context_errno_string(context, errorCode);
     stop(err.str());
   }
   
@@ -102,7 +217,7 @@ List proj_coords(List xy, std::string from, std::string to) {
   
   if (errorCode != 0) {
     std::stringstream err;
-    err << "Error transforming coords: " << proj_errno_string(errorCode);
+    err << "Error transforming coords: " << proj_context_errno_string(context, errorCode);
     stop(err.str());
   }
   
@@ -112,18 +227,7 @@ List proj_coords(List xy, std::string from, std::string to) {
 
 ``` r
 cpp_libproj_init_api()
-
-sf::st_transform(sf::st_sfc(sf::st_point(c(-64, 45)), crs = 4326), 32620)
-#> Geometry set for 1 feature 
-#> geometry type:  POINT
-#> dimension:      XY
-#> bbox:           xmin: 421184.7 ymin: 4983437 xmax: 421184.7 ymax: 4983437
-#> CRS:            EPSG:32620
-#> POINT (421184.7 4983437)
-
-# Note that the PROJ default axis ordering (at the C level)
-# is not what you expect!
-proj_coords(list(45, -64), "EPSG:4326", "EPSG:32620")
+proj_coords(list(-64, 45), "+proj=longlat", "EPSG:32620")
 #> $x
 #> [1] 421184.7
 #> 
@@ -131,58 +235,77 @@ proj_coords(list(45, -64), "EPSG:4326", "EPSG:32620")
 #> [1] 4983437
 ```
 
-## Configuration
+You can also link to libproj directly from C:
 
-Users can configure libproj to point at any compatible proj.db file
-and/or data directory they would like (either permanently or
-temporarily\!):
+``` c
+#include <R.h>
+#include <Rinternals.h>
+
+#include "libproj.h"
+#include "libproj.c"
+
+#include <memory.h>
+
+SEXP c_libproj_init_api() {
+  libproj_init_api();
+  return R_NilValue;
+}
+
+SEXP proj_coords(SEXP xy, SEXP from, SEXP to) {
+  R_xlen_t n = Rf_xlength(VECTOR_ELT(xy, 0));
+  SEXP xout = PROTECT(Rf_allocVector(REALSXP, n));
+  SEXP yout = PROTECT(Rf_allocVector(REALSXP, n));
+
+  double* x = REAL(VECTOR_ELT(xy, 0));
+  double* y = REAL(VECTOR_ELT(xy, 1));
+
+  const char* from_c = Rf_translateCharUTF8(STRING_ELT(from, 0));
+  const char* to_c = Rf_translateCharUTF8(STRING_ELT(to, 0));
+
+  PJ_CONTEXT* context = PJ_DEFAULT_CTX;
+
+  PJ* trans = proj_create_crs_to_crs(context, from_c, to_c, NULL);
+  if (trans == NULL) {
+    int errorCode = proj_context_errno(context);
+    Rf_error("Error creating transform: %s", proj_context_errno_string(context, errorCode));
+  }
+
+  size_t stride = sizeof(double);
+  memcpy(REAL(xout), x, n * sizeof(double));
+  memcpy(REAL(yout), y, n * sizeof(double));
+
+  proj_trans_generic(
+    trans, PJ_FWD,
+    REAL(xout), stride, n,
+    REAL(yout), stride, n,
+    NULL, stride, 0,
+    NULL, stride, 0
+  );
+
+  int errorCode = proj_errno(trans);
+  proj_destroy(trans);
+
+  if (errorCode != 0) {
+    Rf_error("Error transforming coords: %s", proj_context_errno_string(context, errorCode));
+  }
+
+  const char* names[] = {"x", "y", ""};
+  SEXP out = PROTECT(Rf_mkNamed(VECSXP, names));
+  SET_VECTOR_ELT(out, 0, xout);
+  SET_VECTOR_ELT(out, 1, yout);
+  UNPROTECT(3);
+  
+  return out;
+}
+```
 
 ``` r
-library(libproj)
-
-# will download a grid shift file from the PROJ CDN
-# to correct WGS84->NAD83
-with_libproj_configuration(list(network_enabled = TRUE), {
-  proj_coords(list(45, -64), "EPSG:4326", "EPSG:26920")
-})
+.Call("c_libproj_init_api")
+#> NULL
+.Call("proj_coords", list(-64, 45), "+proj=longlat", "EPSG:32620")
 #> $x
-#> [1] 421184.9
+#> [1] 421184.7
 #> 
 #> $y
 #> [1] 4983437
-```
-
-If enabling network downloads, the cache is stored in a temporary
-directory (`libproj_temp_dir()`). You can configure this value to
-persist the cache between R sessions using
-`options(libproj.user_writable_dir = ...)` in your `.Renviron` or using
-`with_libproj_configuration()` or `libproj_configure()` to set this
-value temporarily. A useful user writable directory might be
-`rappdirs::user_data_dir("R-libproj")`.
-
-``` r
-# in .Renviron (`usethis::edit_r_environ()`):
-options(
-  libproj.user_writable_dir = rappdirs::user_data_dir("R-libproj")
-)
-```
-
-After R is restarted, libproj will use this value as the default:
-
-``` r
-libproj_configuration()
-#> $db_path
-#> [1] "/Library/Frameworks/R.framework/Versions/4.0/Resources/library/libproj/proj/proj.db"
-#> 
-#> $search_path
-#> [1] "/Library/Frameworks/R.framework/Versions/4.0/Resources/library/libproj/proj"
-#> 
-#> $network_endpoint
-#> [1] "https://cdn.proj.org"
-#> 
-#> $network_enabled
-#> [1] FALSE
-#> 
-#> $user_writable_dir
-#> [1] "/Users/dewey/Library/Application Support/R-libproj"
 ```

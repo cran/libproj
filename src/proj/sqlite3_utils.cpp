@@ -1,3 +1,4 @@
+#include "cpp-compat.h"
 /******************************************************************************
  * Project:  PROJ
  * Purpose:  SQLite3 related utilities
@@ -25,16 +26,16 @@
  * DEALINGS IN THE SOFTWARE.
  *****************************************************************************/
 
-// #ifdef __GNUC__
+#ifdef __GNUC__
 // #pragma GCC diagnostic push
 // #pragma GCC diagnostic ignored "-Weffc++"
-// #endif
+#endif
 
-#include "sqlite3_utils.hpp"
+#include "R-libproj/sqlite3_utils.hpp"
 
-// #ifdef __GNUC__
+#ifdef __GNUC__
 // #pragma GCC diagnostic pop
-// #endif
+#endif
 
 #include <cstdlib>
 #include <cstring>
@@ -103,7 +104,7 @@ static int VFSCustomOpen(sqlite3_vfs *vfs, const char *name, sqlite3_file *file,
         if (realVFS->fakeSync) {
             // Disable xSync because it can be significantly slow and we don't
             // need
-            // that level of data integrity garanty for the cache.
+            // that level of data integrity guarantee for the cache.
             methods->xSync = VSFNoOpLockUnlockSync;
         }
         if (realVFS->fakeLock) {

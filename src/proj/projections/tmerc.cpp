@@ -15,10 +15,10 @@
 #include <errno.h>
 #include <math.h>
 
-#include "proj.h"
-#include "proj_internal.h"
+#include "R-libproj/proj.h"
+#include "R-libproj/proj_internal.h"
 #include <math.h>
-#include "mlfn.hpp"
+#include "R-libproj/mlfn.hpp"
 
 PROJ_HEAD(tmerc, "Transverse Mercator") "\n\tCyl, Sph&Ell\n\tapprox";
 PROJ_HEAD(etmerc, "Extended Transverse Mercator") "\n\tCyl, Sph";
@@ -66,15 +66,6 @@ struct tmerc_data {
 /* Constant for "exact" transverse mercator */
 #define PROJ_ETMERC_ORDER 6
 
-// Determine if we should try to provide optimized versions for the Fused Multiply Addition
-// Intel instruction set. We use GCC 6 __attribute__((target_clones("fma","default")))
-// mechanism for that, where the compiler builds a default version, and one that
-// uses FMA. And at runtimes it figures out automatically which version can be used
-// by the current CPU. This allows to create general purpose binaries.
-#if defined(TARGET_CLONES_FMA_ALLOWED) && defined(__GNUC__) && __GNUC__ >= 6 && defined(__x86_64__) && !defined(__FMA__)
-#define BUILD_FMA_OPTIMIZED_VERSION
-#endif
-
 /*****************************************************************************/
 //
 //                  Approximate Transverse Mercator functions
@@ -82,10 +73,7 @@ struct tmerc_data {
 /*****************************************************************************/
 
 
-#ifdef BUILD_FMA_OPTIMIZED_VERSION
-__attribute__((target_clones("fma","default")))
-#endif
-inline static PJ_XY approx_e_fwd_internal (PJ_LP lp, PJ *P)
+static PJ_XY approx_e_fwd (PJ_LP lp, PJ *P)
 {
     PJ_XY xy = {0.0, 0.0};
     const auto *Q = &(static_cast<struct tmerc_data*>(P->opaque)->approx);
@@ -101,7 +89,7 @@ inline static PJ_XY approx_e_fwd_internal (PJ_LP lp, PJ *P)
     if( lp.lam < -M_HALFPI || lp.lam > M_HALFPI ) {
         xy.x = HUGE_VAL;
         xy.y = HUGE_VAL;
-        pj_ctx_set_errno( P->ctx, PJD_ERR_LAT_OR_LON_EXCEED_LIMIT );
+        proj_context_errno_set( P->ctx, PROJ_ERR_COORD_TRANSFM_OUTSIDE_PROJECTION_DOMAIN );
         return xy;
     }
 
@@ -127,34 +115,15 @@ inline static PJ_XY approx_e_fwd_internal (PJ_LP lp, PJ *P)
     return (xy);
 }
 
-static PJ_XY approx_e_fwd (PJ_LP lp, PJ *P)
-{
-    return approx_e_fwd_internal(lp, P);
-}
-
-static PJ_XY approx_s_fwd (PJ_LP lp, PJ *P) {
+static PJ_XY tmerc_spherical_fwd (PJ_LP lp, PJ *P) {
     PJ_XY xy = {0.0,0.0};
     double b, cosphi;
     const auto *Q = &(static_cast<struct tmerc_data*>(P->opaque)->approx);
 
-    /*
-     * Fail if our longitude is more than 90 degrees from the
-     * central meridian since the results are essentially garbage.
-     * Is error -20 really an appropriate return value?
-     *
-     *  http://trac.osgeo.org/proj/ticket/5
-     */
-    if( lp.lam < -M_HALFPI || lp.lam > M_HALFPI ) {
-        xy.x = HUGE_VAL;
-        xy.y = HUGE_VAL;
-        pj_ctx_set_errno( P->ctx, PJD_ERR_LAT_OR_LON_EXCEED_LIMIT );
-        return xy;
-    }
-
     cosphi = cos(lp.phi);
     b = cosphi * sin (lp.lam);
     if (fabs (fabs (b) - 1.) <= EPS10) {
-        proj_errno_set(P, PJD_ERR_TOLERANCE_CONDITION);
+        proj_errno_set(P, PROJ_ERR_COORD_TRANSFM_OUTSIDE_PROJECTION_DOMAIN);
         return xy;
     }
 
@@ -162,9 +131,14 @@ static PJ_XY approx_s_fwd (PJ_LP lp, PJ *P) {
     xy.y = cosphi * cos (lp.lam) / sqrt (1. - b * b);
 
     b = fabs ( xy.y );
-    if (b >= 1.) {
+    if (cosphi == 1 && (lp.lam < -M_HALFPI || lp.lam > M_HALFPI) ) {
+        /* Helps to be able to roundtrip |longitudes| > 90 at lat=0 */
+        /* We could also map to -M_PI ... */
+        xy.y = M_PI;
+    }
+    else if (b >= 1.) {
         if ((b - 1.) > EPS10) {
-            proj_errno_set(P, PJD_ERR_TOLERANCE_CONDITION);
+            proj_errno_set(P, PROJ_ERR_COORD_TRANSFM_OUTSIDE_PROJECTION_DOMAIN);
             return xy;
         }
         else xy.y = 0.;
@@ -177,10 +151,7 @@ static PJ_XY approx_s_fwd (PJ_LP lp, PJ *P) {
     return xy;
 }
 
-#ifdef BUILD_FMA_OPTIMIZED_VERSION
-__attribute__((target_clones("fma","default")))
-#endif
-inline static PJ_LP approx_e_inv_internal (PJ_XY xy, PJ *P) {
+static PJ_LP approx_e_inv (PJ_XY xy, PJ *P) {
     PJ_LP lp = {0.0,0.0};
     const auto *Q = &(static_cast<struct tmerc_data*>(P->opaque)->approx);
 
@@ -212,26 +183,24 @@ inline static PJ_LP approx_e_inv_internal (PJ_XY xy, PJ *P) {
     return lp;
 }
 
-static PJ_LP approx_e_inv (PJ_XY xy, PJ *P) {
-    return approx_e_inv_internal(xy, P);
-}
-
-static PJ_LP approx_s_inv (PJ_XY xy, PJ *P) {
+static PJ_LP tmerc_spherical_inv (PJ_XY xy, PJ *P) {
     PJ_LP lp = {0.0, 0.0};
     double h, g;
     const auto *Q = &(static_cast<struct tmerc_data*>(P->opaque)->approx);
 
     h = exp(xy.x / Q->esp);
     if( h == 0 ) {
-        proj_errno_set(P, PJD_ERR_INVALID_X_OR_Y);
+        proj_errno_set(P, PROJ_ERR_COORD_TRANSFM_OUTSIDE_PROJECTION_DOMAIN);
         return proj_coord_error().lp;
     }
     g = .5 * (h - 1. / h);
-    h = cos (P->phi0 + xy.y / Q->esp);
+    /* D, as in equation 8-8 of USGS "Map Projections - A Working Manual" */
+    const double D = P->phi0 + xy.y / Q->esp;
+    h = cos (D);
     lp.phi = asin(sqrt((1. - h * h) / (1. + g * g)));
 
     /* Make sure that phi is on the correct hemisphere when false northing is used */
-    if (xy.y < 0. && -lp.phi+P->phi0 < 0.0) lp.phi = -lp.phi;
+    lp.phi = copysign(lp.phi, D);
 
     lp.lam = (g != 0.0 || h != 0.0) ? atan2 (g, h) : 0.;
     return lp;
@@ -245,7 +214,7 @@ static PJ *destructor(PJ *P, int errlev) {
     if (nullptr==P->opaque)
         return pj_default_destructor(P, errlev);
 
-    pj_dealloc (static_cast<struct tmerc_data*>(P->opaque)->approx.en);
+    free (static_cast<struct tmerc_data*>(P->opaque)->approx.en);
     return pj_default_destructor(P, errlev);
 }
 
@@ -255,7 +224,7 @@ static PJ *setup_approx(PJ *P) {
 
     if (P->es != 0.0) {
         if (!(Q->en = pj_enfn(P->es)))
-            return pj_default_destructor(P, ENOMEM);
+            return pj_default_destructor(P, PROJ_ERR_OTHER /*ENOMEM*/);
 
         Q->ml0 = pj_mlfn(P->phi0, sin(P->phi0), cos(P->phi0), Q->en);
         Q->esp = P->es / (1. - P->es);
@@ -433,8 +402,10 @@ static PJ_XY exact_e_fwd (PJ_LP lp, PJ *P) {
     if (fabs (Ce) <= 2.623395162778) {
         xy.y  = Q->Qn * Cn + Q->Zb;  /* Northing */
         xy.x  = Q->Qn * Ce;          /* Easting  */
-    } else
+    } else {
+        proj_errno_set(P, PROJ_ERR_COORD_TRANSFM_OUTSIDE_PROJECTION_DOMAIN);
         xy.x = xy.y = HUGE_VAL;
+    }
     return xy;
 }
 
@@ -507,22 +478,21 @@ static PJ_LP exact_e_inv (PJ_XY xy, PJ *P) {
         lp.phi = gatg (Q->cgb,  PROJ_ETMERC_ORDER, Cn, cos_2_Cn, sin_2_Cn);
         lp.lam = Ce;
     }
-    else
+    else {
+        proj_errno_set(P, PROJ_ERR_COORD_TRANSFM_OUTSIDE_PROJECTION_DOMAIN);
         lp.phi = lp.lam = HUGE_VAL;
+    }
     return lp;
 }
 
 static PJ *setup_exact(PJ *P) {
-    double f, n, np, Z;
     auto *Q = &(static_cast<struct tmerc_data*>(P->opaque)->exact);
 
     assert( P->es > 0 );
 
-    /* flattening */
-    f = P->es / (1 + sqrt (1 -  P->es)); /* Replaces: f = 1 - sqrt(1-P->es); */
-
     /* third flattening */
-    np = n = f/(2 - f);
+    const double n = P->n;
+    double np = n;
 
     /* COEF. OF TRIG SERIES GEO <-> GAUSS */
     /* cgb := Gaussian -> Geodetic, KW p190 - 191 (61) - (62) */
@@ -587,7 +557,7 @@ static PJ *setup_exact(PJ *P) {
     Q->gtu[5] = np*(212378941/319334400.0);
 
     /* Gaussian latitude value of the origin latitude */
-    Z = gatg (Q->cbg, PROJ_ETMERC_ORDER, P->phi0, cos(2*P->phi0), sin(2*P->phi0));
+    const double Z = gatg (Q->cbg, PROJ_ETMERC_ORDER, P->phi0, cos(2*P->phi0), sin(2*P->phi0));
 
     /* Origin northing minus true northing at the origin latitude */
     /* i.e. true northing = N - P->Zb                         */
@@ -619,9 +589,9 @@ static PJ_LP auto_e_inv (PJ_XY xy, PJ *P) {
 
 static PJ *setup(PJ *P, TMercAlgo eAlg) {
 
-    struct tmerc_data *Q = static_cast<struct tmerc_data*>(pj_calloc (1, sizeof (struct tmerc_data)));
+    struct tmerc_data *Q = static_cast<struct tmerc_data*>(calloc (1, sizeof (struct tmerc_data)));
     if (nullptr==Q)
-        return pj_default_destructor (P, ENOMEM);
+        return pj_default_destructor (P, PROJ_ERR_OTHER /*ENOMEM*/);
     P->opaque = Q;
 
     if( P->es == 0 )
@@ -636,8 +606,8 @@ static PJ *setup(PJ *P, TMercAlgo eAlg) {
                 return nullptr;
             if( P->es == 0 )
             {
-                P->inv = approx_s_inv;
-                P->fwd = approx_s_fwd;
+                P->inv = tmerc_spherical_inv;
+                P->fwd = tmerc_spherical_fwd;
             }
             else
             {
@@ -706,7 +676,7 @@ static bool getAlgoFromParams(PJ* P, TMercAlgo& algo)
     else
     {
         pj_load_ini(P->ctx); // if not already done
-        pj_ctx_set_errno(P->ctx, 0); // reset error in case proj.ini couldn't be found
+        proj_context_errno_set(P->ctx, 0); // reset error in case proj.ini couldn't be found
         algo = P->ctx->defaultTmercAlgo;
     }
 
@@ -735,14 +705,18 @@ PJ *PROJECTION(tmerc) {
 
     TMercAlgo algo;
     if( !getAlgoFromParams(P, algo) )
-        return pj_default_destructor(P, PJD_ERR_INVALID_ARG);
+    {
+        proj_log_error(P, _("Invalid value for algo"));
+        return pj_default_destructor(P, PROJ_ERR_INVALID_OP_ILLEGAL_ARG_VALUE);
+    }
     return setup(P, algo);
 }
 
 
 PJ *PROJECTION(etmerc) {
     if (P->es == 0.0) {
-        return pj_default_destructor(P, PJD_ERR_ELLIPSOID_USE_REQUIRED);
+        proj_log_error(P, _("Invalid value for eccentricity: it should not be zero"));
+        return pj_default_destructor(P, PROJ_ERR_INVALID_OP_ILLEGAL_ARG_VALUE);
     }
 
    return setup (P, TMercAlgo::PODER_ENGSAGER);
@@ -754,10 +728,12 @@ PJ *PROJECTION(etmerc) {
 PJ *PROJECTION(utm) {
     long zone;
     if (P->es == 0.0) {
-        return pj_default_destructor(P, PJD_ERR_ELLIPSOID_USE_REQUIRED);
+        proj_log_error(P, _("Invalid value for eccentricity: it should not be zero"));
+        return pj_default_destructor(P, PROJ_ERR_INVALID_OP_ILLEGAL_ARG_VALUE);
     }
     if (P->lam0 < -1000.0 || P->lam0 > 1000.0) {
-        return pj_default_destructor(P, PJD_ERR_INVALID_UTM_ZONE);
+        proj_log_error(P, _("Invalid value for lon_0"));
+        return pj_default_destructor(P, PROJ_ERR_INVALID_OP_ILLEGAL_ARG_VALUE);
     }
 
     P->y0 = pj_param (P->ctx, P->params, "bsouth").i ? 10000000. : 0.;
@@ -768,7 +744,8 @@ PJ *PROJECTION(utm) {
         if (zone > 0 && zone <= 60)
             --zone;
         else {
-            return pj_default_destructor(P, PJD_ERR_INVALID_UTM_ZONE);
+            proj_log_error(P, _("Invalid value for zone"));
+            return pj_default_destructor(P, PROJ_ERR_INVALID_OP_ILLEGAL_ARG_VALUE);
         }
     }
     else /* nearest central meridian input */
@@ -785,6 +762,9 @@ PJ *PROJECTION(utm) {
 
     TMercAlgo algo;
     if( !getAlgoFromParams(P, algo) )
-        return pj_default_destructor(P, PJD_ERR_INVALID_ARG);
+    {
+        proj_log_error(P, _("Invalid value for algo"));
+        return pj_default_destructor(P, PROJ_ERR_INVALID_OP_ILLEGAL_ARG_VALUE);
+    }
     return setup(P, algo);
 }

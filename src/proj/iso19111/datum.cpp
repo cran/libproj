@@ -30,23 +30,22 @@
 #define FROM_PROJ_CPP
 #endif
 
-#include "proj/datum.hpp"
-#include "proj/common.hpp"
-#include "proj/io.hpp"
-#include "proj/metadata.hpp"
-#include "proj/util.hpp"
+#include "R-libproj/proj/datum.hpp"
+#include "R-libproj/proj/common.hpp"
+#include "R-libproj/proj/io.hpp"
+#include "R-libproj/proj/metadata.hpp"
+#include "R-libproj/proj/util.hpp"
 
-#include "proj/internal/internal.hpp"
-#include "proj/internal/io_internal.hpp"
+#include "R-libproj/proj/internal/internal.hpp"
+#include "R-libproj/proj/internal/io_internal.hpp"
 
 // PROJ include order is sensitive
 // clang-format off
-#include "proj.h"
-#include "proj_internal.h"
-#include "proj_api.h"
+#include "R-libproj/proj.h"
+#include "R-libproj/proj_internal.h"
 // clang-format on
 
-#include "proj_json_streaming_writer.hpp"
+#include "R-libproj/proj_json_streaming_writer.hpp"
 
 #include <cmath>
 #include <cstdlib>
@@ -352,6 +351,23 @@ void PrimeMeridian::_exportToWKT(
     if (!(isWKT2 && formatter->primeMeridianOmittedIfGreenwich() &&
           l_name == "Greenwich")) {
         formatter->startNode(io::WKTConstants::PRIMEM, !identifiers().empty());
+
+        if (formatter->useESRIDialect()) {
+            bool aliasFound = false;
+            const auto &dbContext = formatter->databaseContext();
+            if (dbContext) {
+                auto l_alias = dbContext->getAliasFromOfficialName(
+                    l_name, "prime_meridian", "ESRI");
+                if (!l_alias.empty()) {
+                    l_name = l_alias;
+                    aliasFound = true;
+                }
+            }
+            if (!aliasFound) {
+                l_name = io::WKTFormatter::morphNameToESRI(l_name);
+            }
+        }
+
         formatter->addQuotedString(l_name);
         const auto &l_long = longitude();
         if (formatter->primeMeridianInDegree()) {
@@ -418,7 +434,7 @@ std::string
 PrimeMeridian::getPROJStringWellKnownName(const common::Angle &angle) {
     const double valRad = angle.getSIValue();
     std::string projPMName;
-    projCtx ctxt = pj_ctx_alloc();
+    PJ_CONTEXT *ctxt = proj_context_create();
     auto proj_pm = proj_list_prime_meridians();
     for (int i = 0; proj_pm[i].id != nullptr; ++i) {
         double valRefRad = dmstor_ctx(ctxt, proj_pm[i].defn, nullptr);
@@ -427,7 +443,7 @@ PrimeMeridian::getPROJStringWellKnownName(const common::Angle &angle) {
             break;
         }
     }
-    pj_ctx_free(ctxt);
+    proj_context_destroy(ctxt);
     return projPMName;
 }
 //! @endcond
@@ -819,9 +835,8 @@ void Ellipsoid::_exportToWKT(
         }
         formatter->add(computedInverseFlattening());
         const auto &unit = semiMajor.unit();
-        if (isWKT2 &&
-            !(formatter->ellipsoidUnitOmittedIfMetre() &&
-              unit == common::UnitOfMeasure::METRE)) {
+        if (isWKT2 && !(formatter->ellipsoidUnitOmittedIfMetre() &&
+                        unit == common::UnitOfMeasure::METRE)) {
             unit._exportToWKT(formatter, io::WKTConstants::LENGTHUNIT);
         }
         if (formatter->outputId()) {
@@ -1253,8 +1268,9 @@ void GeodeticReferenceFrame::_exportToWKT(
                     // as to trigger the caching done in createObjectsFromName()
                     // in that case.
                     auto matches = factory->createObjectsFromName(
-                        l_name, {io::AuthorityFactory::ObjectType::
-                                     GEODETIC_REFERENCE_FRAME},
+                        l_name,
+                        {io::AuthorityFactory::ObjectType::
+                             GEODETIC_REFERENCE_FRAME},
                         true, 2);
                     if (matches.size() == 1) {
                         const auto &match = matches.front();
@@ -1300,6 +1316,13 @@ void GeodeticReferenceFrame::_exportToWKT(
     }
     // the PRIMEM is exported as a child of the CRS
     formatter->endNode();
+
+    if (formatter->isAtTopLevel()) {
+        const auto &l_primeMeridian(primeMeridian());
+        if (l_primeMeridian->nameStr() != "Greenwich") {
+            l_primeMeridian->_exportToWKT(formatter);
+        }
+    }
 }
 //! @endcond
 
@@ -1574,8 +1597,7 @@ DatumEnsemble::DatumEnsemble(const std::vector<DatumNNPtr> &datumsIn,
 
 #ifdef notdef
 DatumEnsemble::DatumEnsemble(const DatumEnsemble &other)
-    : common::IdentifiedObject(other),
-      d(internal::make_unique<Private>(*other.d)) {}
+    : common::ObjectUsage(other), d(internal::make_unique<Private>(*other.d)) {}
 #endif
 
 // ---------------------------------------------------------------------------
@@ -1614,16 +1636,83 @@ DatumEnsemble::positionalAccuracy() const {
 // ---------------------------------------------------------------------------
 
 //! @cond Doxygen_Suppress
+DatumNNPtr
+DatumEnsemble::asDatum(const io::DatabaseContextPtr &dbContext) const {
+
+    const auto &l_datums = datums();
+    auto *grf = dynamic_cast<const GeodeticReferenceFrame *>(l_datums[0].get());
+
+    const auto &l_identifiers = identifiers();
+    if (dbContext) {
+        if (!l_identifiers.empty()) {
+            const auto &id = l_identifiers[0];
+            try {
+                auto factory = io::AuthorityFactory::create(
+                    NN_NO_CHECK(dbContext), *(id->codeSpace()));
+                if (grf) {
+                    return factory->createGeodeticDatum(id->code());
+                } else {
+                    return factory->createVerticalDatum(id->code());
+                }
+            } catch (const std::exception &) {
+            }
+        }
+    }
+
+    std::string l_name(nameStr());
+    if (grf) {
+        // Remap to traditional datum names
+        if (l_name == "World Geodetic System 1984 ensemble") {
+            l_name = "World Geodetic System 1984";
+        } else if (l_name ==
+                   "European Terrestrial Reference System 1989 ensemble") {
+            l_name = "European Terrestrial Reference System 1989";
+        }
+    }
+    auto props =
+        util::PropertyMap().set(common::IdentifiedObject::NAME_KEY, l_name);
+    if (isDeprecated()) {
+        props.set(common::IdentifiedObject::DEPRECATED_KEY, true);
+    }
+    if (!l_identifiers.empty()) {
+        const auto &id = l_identifiers[0];
+        props.set(metadata::Identifier::CODESPACE_KEY, *(id->codeSpace()))
+            .set(metadata::Identifier::CODE_KEY, id->code());
+    }
+    const auto &l_usages = domains();
+    if (!l_usages.empty()) {
+
+        auto array(util::ArrayOfBaseObject::create());
+        for (const auto &usage : l_usages) {
+            array->add(usage);
+        }
+        props.set(common::ObjectUsage::OBJECT_DOMAIN_KEY,
+                  util::nn_static_pointer_cast<util::BaseObject>(array));
+    }
+    const auto anchor = util::optional<std::string>();
+
+    if (grf) {
+        return GeodeticReferenceFrame::create(props, grf->ellipsoid(), anchor,
+                                              grf->primeMeridian());
+    } else {
+        assert(dynamic_cast<VerticalReferenceFrame *>(l_datums[0].get()));
+        return datum::VerticalReferenceFrame::create(props, anchor);
+    }
+}
+//! @endcond
+
+// ---------------------------------------------------------------------------
+
+//! @cond Doxygen_Suppress
 void DatumEnsemble::_exportToWKT(
     io::WKTFormatter *formatter) const // throw(FormattingException)
 {
     const bool isWKT2 = formatter->version() == io::WKTFormatter::Version::WKT2;
     if (!isWKT2 || !formatter->use2019Keywords()) {
-        throw io::FormattingException(
-            "DatumEnsemble can only be exported to WKT2:2019");
+        return asDatum(formatter->databaseContext())->_exportToWKT(formatter);
     }
 
-    auto l_datums = datums();
+    const auto &l_datums = datums();
     assert(!l_datums.empty());
 
     formatter->startNode(io::WKTConstants::ENSEMBLE, false);
@@ -1658,6 +1747,14 @@ void DatumEnsemble::_exportToWKT(
     formatter->startNode(io::WKTConstants::ENSEMBLEACCURACY, false);
     formatter->add(positionalAccuracy()->value());
     formatter->endNode();
+
+    // In theory, we should do the following, but currently the WKT grammar
+    // doesn't allow this
+    // ObjectUsage::baseExportToWKT(formatter);
+    if (formatter->outputId()) {
+        formatID(formatter);
+    }
+
     formatter->endNode();
 }
 //! @endcond
@@ -1680,7 +1777,7 @@ void DatumEnsemble::_exportToJSON(
         writer->Add(l_name);
     }
 
-    auto l_datums = datums();
+    const auto &l_datums = datums();
     writer->AddObjKey("members");
     {
         auto membersContext(writer->MakeArrayContext(false));
@@ -1773,12 +1870,8 @@ RealizationMethod::RealizationMethod(const std::string &nameIn)
 
 // ---------------------------------------------------------------------------
 
-RealizationMethod::RealizationMethod(const RealizationMethod &) = default;
-
-// ---------------------------------------------------------------------------
-
-RealizationMethod &RealizationMethod::
-operator=(const RealizationMethod &other) {
+RealizationMethod &
+RealizationMethod::operator=(const RealizationMethod &other) {
     CodeList::operator=(other);
     return *this;
 }
@@ -1864,8 +1957,23 @@ void VerticalReferenceFrame::_exportToWKT(
                                       ? io::WKTConstants::VDATUM
                                       : io::WKTConstants::VERT_DATUM,
                          !identifiers().empty());
-    const auto &l_name = nameStr();
+    auto l_name = nameStr();
     if (!l_name.empty()) {
+        if (!isWKT2 && formatter->useESRIDialect()) {
+            bool aliasFound = false;
+            const auto &dbContext = formatter->databaseContext();
+            if (dbContext) {
+                auto l_alias = dbContext->getAliasFromOfficialName(
+                    l_name, "vertical_datum", "ESRI");
+                if (!l_alias.empty()) {
+                    l_name = l_alias;
+                    aliasFound = true;
+                }
+            }
+            if (!aliasFound) {
+                l_name = io::WKTFormatter::morphNameToESRI(l_name);
+            }
+        }
         formatter->addQuotedString(l_name);
     } else {
         formatter->addQuotedString("unnamed");

@@ -1,3 +1,4 @@
+#include "cpp-compat.h"
 /******************************************************************************
  *
  * Project:  PROJ
@@ -30,10 +31,10 @@
 #define FROM_PROJ_CPP
 #endif
 
-#include "proj/util.hpp"
-#include "proj/io.hpp"
+#include "R-libproj/proj/util.hpp"
+#include "R-libproj/proj/io.hpp"
 
-#include "proj/internal/internal.hpp"
+#include "R-libproj/proj/internal/internal.hpp"
 
 #include <map>
 #include <memory>
@@ -81,11 +82,22 @@ BaseObjectNNPtr::~BaseObjectNNPtr() = default;
 
 // ---------------------------------------------------------------------------
 
+//! @cond Doxygen_Suppress
+// cppcheck-suppress operatorEqVarError
+BaseObject &BaseObject::operator=(BaseObject &&) {
+    d->self_.reset();
+    return *this;
+}
+
+//! @endcond
+
+// ---------------------------------------------------------------------------
+
 /** Keep a reference to ourselves as an internal weak pointer. So that
  * extractGeographicBaseObject() can later return a shared pointer on itself.
  */
 void BaseObject::assignSelf(const BaseObjectNNPtr &self) {
-    assert(self.get() == this);
+    cpp_compat_assert(self.get() == this);
     d->self_ = self.as_nullable();
 }
 

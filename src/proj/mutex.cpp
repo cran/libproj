@@ -1,3 +1,4 @@
+#include "cpp-compat.h"
 /******************************************************************************
  * Project:  PROJ.4
  * Purpose:  Mutex (thread lock) functions.
@@ -30,16 +31,11 @@
 #define _GNU_SOURCE
 #endif
 
-#include "proj.h"
+#include "R-libproj/proj.h"
 #ifndef _WIN32
-#include "proj_config.h"
-#include "proj_internal.h"
-#else
-#ifndef ACCEPT_USE_OF_DEPRECATED_PROJ_API_H
-#define ACCEPT_USE_OF_DEPRECATED_PROJ_API_H
+#include "R-libproj/proj_config.h"
 #endif
-#include "proj_api.h"
-#endif
+#include "R-libproj/proj_internal.h"
 
 /* on win32 we always use win32 mutexes, even if pthreads are available */
 #if defined(_WIN32) && !defined(MUTEX_stub)
@@ -98,17 +94,17 @@ void pj_cleanup_lock()
 
 #ifdef MUTEX_pthread
 
-#include "pthread.h"
+#include "R-libproj/pthread.h"
 
 #ifdef PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP
-// #ifdef __GNUC__
+#ifdef __GNUC__
 // #pragma GCC diagnostic push
 // #pragma GCC diagnostic ignored "-Wzero-as-null-pointer-constant"
-// #endif
+#endif
 static pthread_mutex_t core_lock = PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP;
-// #ifdef __GNUC__
+#ifdef __GNUC__
 // #pragma GCC diagnostic pop
-// #endif
+#endif
 #else
 static pthread_mutex_t core_lock;
 
@@ -147,7 +143,7 @@ void pj_acquire_lock()
     static pthread_once_t sOnceKey = PTHREAD_ONCE_INIT;
     if( pthread_once(&sOnceKey, pj_create_lock) != 0 )
     {
-        fprintf(stderr, "pthread_once() failed in pj_acquire_lock().\n");
+        cpp_compat_printerrf("pthread_once() failed in pj_acquire_lock().\n");
     }
 #endif
 
@@ -184,7 +180,7 @@ void pj_cleanup_lock()
 
 #include <windows.h>
 
-static HANDLE mutex_lock = NULL;
+static HANDLE mutex_lock = nullptr;
 
 #if _WIN32_WINNT >= 0x0600
 
@@ -199,7 +195,7 @@ static BOOL CALLBACK pj_create_lock(PINIT_ONCE InitOnce,
     (void)InitOnce;
     (void)Parameter;
     (void)Context;
-    mutex_lock = CreateMutex( NULL, FALSE, NULL );
+    mutex_lock = CreateMutex( nullptr, FALSE, nullptr );
     return TRUE;
 }
 #endif
@@ -213,10 +209,10 @@ static void pj_init_lock()
 {
 #if _WIN32_WINNT >= 0x0600
     static INIT_ONCE sInitOnce = INIT_ONCE_STATIC_INIT;
-    InitOnceExecuteOnce( &sInitOnce, pj_create_lock, NULL, NULL );
+    InitOnceExecuteOnce( &sInitOnce, pj_create_lock, nullptr, nullptr );
 #else
-    if( mutex_lock == NULL )
-        mutex_lock = CreateMutex( NULL, FALSE, NULL );
+    if( mutex_lock == nullptr )
+        mutex_lock = CreateMutex( nullptr, FALSE, nullptr );
 #endif
 }
 
@@ -228,7 +224,7 @@ static void pj_init_lock()
 
 void pj_acquire_lock()
 {
-    if( mutex_lock == NULL )
+    if( mutex_lock == nullptr )
         pj_init_lock();
 
     WaitForSingleObject( mutex_lock, INFINITE );
@@ -242,7 +238,7 @@ void pj_acquire_lock()
 
 void pj_release_lock()
 {
-    if( mutex_lock == NULL )
+    if( mutex_lock == nullptr )
         pj_init_lock();
     else
         ReleaseMutex( mutex_lock );
@@ -253,10 +249,10 @@ void pj_release_lock()
 /************************************************************************/
 void pj_cleanup_lock()
 {
-    if( mutex_lock != NULL )
+    if( mutex_lock != nullptr )
     {
         CloseHandle( mutex_lock );
-        mutex_lock = NULL;
+        mutex_lock = nullptr;
     }
 }
 
